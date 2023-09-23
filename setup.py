@@ -11,14 +11,14 @@ from pathlib import Path
 from setuptools import setup
 
 
-NAME = 'encodec'
+NAME = 'uncodec'
 DESCRIPTION = 'High fidelity neural audio codec'
 URL = 'https://github.com/facebookresearch/encodec'
 EMAIL = 'defossez@fb.com'
 AUTHOR = 'Alexandre Défossez, Jade Copet, Yossi Adi, Gabriel Synnaeve'
 REQUIRES_PYTHON = '>=3.8.0'
 
-for line in open('encodec/__init__.py'):
+for line in open('uncodec/__init__.py'):
     line = line.strip()
     if '__version__' in line:
         context = {}
@@ -43,14 +43,14 @@ setup(
     author_email=EMAIL,
     python_requires=REQUIRES_PYTHON,
     url=URL,
-    packages=['encodec', 'encodec.quantization', 'encodec.modules'],
+    packages=['uncodec', 'uncodec.quantization', 'uncodec.modules'],
     extras_require={
         'dev': ['flake8', 'mypy', 'pdoc3'],
     },
     install_requires=['numpy', 'torch', 'torchaudio', 'einops'],
     include_package_data=True,
     entry_points={
-        'console_scripts': ['encodec=encodec.__main__:main'],
+        'console_scripts': ['uncodec=uncodec.__main__:main'],
     },
     license='MIT License',
     classifiers=[

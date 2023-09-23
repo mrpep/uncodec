@@ -88,7 +88,9 @@ class EncodecModel(nn.Module):
                  normalize: bool = False,
                  segment: tp.Optional[float] = None,
                  overlap: float = 0.01,
-                 name: str = 'unset'):
+                 name: str = 'unset',
+                 unet: bool = False):
+
         super().__init__()
         self.bandwidth: tp.Optional[float] = None
         self.target_bandwidths = target_bandwidths
@@ -102,9 +104,13 @@ class EncodecModel(nn.Module):
         self.overlap = overlap
         self.frame_rate = math.ceil(self.sample_rate / np.prod(self.encoder.ratios))
         self.name = name
-        self.bits_per_codebook = int(math.log2(self.quantizer.bins))
-        assert 2 ** self.bits_per_codebook == self.quantizer.bins, \
-            "quantizer bins must be a power of 2."
+        self.unet = unet
+        if quantizer is not None:
+            self.bits_per_codebook = int(math.log2(self.quantizer.bins))
+            assert 2 ** self.bits_per_codebook == self.quantizer.bins, \
+                "quantizer bins must be a power of 2."
+        else:
+            self.bits_per_codebook = None
 
     @property
     def segment_length(self) -> tp.Optional[int]:
@@ -159,10 +165,13 @@ class EncodecModel(nn.Module):
             scale = None
 
         emb = self.encoder(x)
-        codes = self.quantizer.encode(emb, self.frame_rate, self.bandwidth)
-        codes = codes.transpose(0, 1)
-        # codes is [B, K, T], with T frames, K nb of codebooks.
-        return codes, scale
+        if self.quantizer is not None:
+            codes = self.quantizer.encode(emb, self.frame_rate, self.bandwidth)
+            codes = codes.transpose(0, 1)
+            # codes is [B, K, T], with T frames, K nb of codebooks.
+            return codes, scale
+        else:
+            return emb, scale
 
     def decode(self, encoded_frames: tp.List[EncodedFrame]) -> torch.Tensor:
         """Decode the given frames into a waveform.
@@ -178,9 +187,12 @@ class EncodecModel(nn.Module):
         return _linear_overlap_add(frames, self.segment_stride or 1)
 
     def _decode_frame(self, encoded_frame: EncodedFrame) -> torch.Tensor:
-        codes, scale = encoded_frame
-        codes = codes.transpose(0, 1)
-        emb = self.quantizer.decode(codes)
+        if self.quantizer is not None:
+            codes, scale = encoded_frame
+            codes = codes.transpose(0, 1)
+            emb = self.quantizer.decode(codes)
+        else:
+            emb, scale = encoded_frame
         out = self.decoder(emb)
         if scale is not None:
             out = out * scale.view(-1, 1, 1)
@@ -218,22 +230,33 @@ class EncodecModel(nn.Module):
         return lm
 
     @staticmethod
-    def _get_model(target_bandwidths: tp.List[float],
+    def _get_model(target_bandwidths: tp.Optional[tp.List[float]] = None,
                    sample_rate: int = 24_000,
                    channels: int = 1,
                    causal: bool = True,
                    model_norm: str = 'weight_norm',
                    audio_normalize: bool = False,
                    segment: tp.Optional[float] = None,
-                   name: str = 'unset'):
-        encoder = m.SEANetEncoder(channels=channels, norm=model_norm, causal=causal)
-        decoder = m.SEANetDecoder(channels=channels, norm=model_norm, causal=causal)
-        n_q = int(1000 * target_bandwidths[-1] // (math.ceil(sample_rate / encoder.hop_length) * 10))
-        quantizer = qt.ResidualVectorQuantizer(
-            dimension=encoder.dimension,
-            n_q=n_q,
-            bins=1024,
-        )
+                   name: str = 'unset',
+                   unet: bool = False):
+
+        if unet:
+            encoder = m.USEANetEncoder(channels=channels, norm=model_norm, causal=causal)
+            decoder = m.USEANetDecoder(channels=channels, norm=model_norm, causal=causal)
+        else:
+            encoder = m.SEANetEncoder(channels=channels, norm=model_norm, causal=causal)
+            decoder = m.SEANetDecoder(channels=channels, norm=model_norm, causal=causal)
+
+        if target_bandwidths is not None:
+            n_q = int(1000 * target_bandwidths[-1] // (math.ceil(sample_rate / encoder.hop_length) * 10))
+            quantizer = qt.ResidualVectorQuantizer(
+                dimension=encoder.dimension,
+                n_q=n_q,
+                bins=1024,
+            )
+        else:
+            quantizer = None
+
         model = EncodecModel(
             encoder,
             decoder,
@@ -244,6 +267,7 @@ class EncodecModel(nn.Module):
             normalize=audio_normalize,
             segment=segment,
             name=name,
+            unet=unet
         )
         return model
 
@@ -277,6 +301,25 @@ class EncodecModel(nn.Module):
         if pretrained:
             state_dict = EncodecModel._get_pretrained(checkpoint_name, repository)
             model.load_state_dict(state_dict)
+        model.eval()
+        return model
+
+    @staticmethod
+    def uncodec_model_24khz(pretrained: bool = True, repository: tp.Optional[Path] = None):
+        if repository:
+            assert pretrained
+        target_bandwidths = None
+        checkpoint_name = 'encodec_24khz-d7cc33bc.th'
+        sample_rate = 24_000
+        channels = 1
+        model = EncodecModel._get_model(
+            target_bandwidths, sample_rate, channels,
+            causal=True, model_norm='weight_norm', audio_normalize=False,
+            name='encodec_24khz' if pretrained else 'unset',
+            unet=True)
+        if pretrained:
+            state_dict = EncodecModel._get_pretrained(checkpoint_name, repository)
+            model.load_state_dict(state_dict, strict=False)
         model.eval()
         return model
 

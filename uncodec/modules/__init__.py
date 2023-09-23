@@ -18,5 +18,6 @@ from .conv import (
     SConvTranspose1d,
 )
 from .lstm import SLSTM
-from .seanet import SEANetEncoder, SEANetDecoder
+from .seanet import SEANetEncoder, SEANetDecoder, SEANetResnetBlock
+from .useanet import USEANetEncoder, USEANetDecoder
 from .transformer import StreamingTransformerEncoder
