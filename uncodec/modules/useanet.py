@@ -90,6 +90,13 @@ class USEANetEncoder(nn.Module):
 
         return x, activations
 
+class ScaleLayer(nn.Module):
+    def __init__(self, initial_scale=0.):
+        super().__init__()
+        self.scale = torch.nn.Parameter(torch.tensor(initial_scale))
+
+    def forward(self, x):
+        return x*self.scale
 
 class USEANetDecoder(nn.Module):
     """SEANet decoder.
@@ -124,7 +131,7 @@ class USEANetDecoder(nn.Module):
                  norm: str = 'weight_norm', norm_params: tp.Dict[str, tp.Any] = {}, kernel_size: int = 7,
                  last_kernel_size: int = 7, residual_kernel_size: int = 3, dilation_base: int = 2, causal: bool = False,
                  pad_mode: str = 'reflect', true_skip: bool = False, compress: int = 2, lstm: int = 2,
-                 trim_right_ratio: float = 1.0):
+                 trim_right_ratio: float = 1.0, skip_connection_type='cat_linear'):
         super().__init__()
         self.dimension = dimension
         self.channels = channels
@@ -133,6 +140,7 @@ class USEANetDecoder(nn.Module):
         del ratios
         self.n_residual_layers = n_residual_layers
         self.hop_length = np.prod(self.ratios)
+        self.skip_connection_type = skip_connection_type
 
         act = getattr(nn, activation)
         mult = int(2 ** len(self.ratios))
@@ -156,7 +164,12 @@ class USEANetDecoder(nn.Module):
                                  norm=norm, norm_kwargs=norm_params,
                                  causal=causal, trim_right_ratio=trim_right_ratio),
             ]
-            adaptation_layers.append(torch.nn.Linear(2*mult * n_filters, mult * n_filters))
+            if self.skip_connection_type == 'cat_linear':
+                adaptation_layers.append(torch.nn.Linear(2*mult * n_filters, mult * n_filters))
+            elif self.skip_connection_type == 'scaled_sum':
+                adaptation_layers.append(torch.nn.Sequential(torch.nn.Linear(mult * n_filters, mult * n_filters), ScaleLayer()))
+            else:
+                raise Exception('Unrecognized skip_connection_type')
             # Add residual layers
             for j in range(n_residual_layers):
                 model += [
@@ -174,7 +187,12 @@ class USEANetDecoder(nn.Module):
             SConv1d(n_filters, channels, last_kernel_size, norm=norm, norm_kwargs=norm_params,
                     causal=causal, pad_mode=pad_mode)
         ]
-        adaptation_layers.append(torch.nn.Linear(2*n_filters, n_filters),)
+        if self.skip_connection_type == 'cat_linear':
+            adaptation_layers.append(torch.nn.Linear(2*n_filters, n_filters),)
+        elif self.skip_connection_type == 'scaled_sum':
+            adaptation_layers.append(torch.nn.Sequential(torch.nn.Linear(n_filters, n_filters), ScaleLayer()))
+        else:
+            raise Exception('Unrecognized skip_connection_type')
         # Add optional final activation to decoder (eg. tanh)
         if final_activation is not None:
             final_act = getattr(nn, final_activation)
@@ -192,10 +210,14 @@ class USEANetDecoder(nn.Module):
         for l in self.model:
             if l.__class__.__name__ == 'ELU':
                 x = l(x)
-                x = torch.cat([x,activations[-1-i]],axis=1)
-                x = torch.transpose(x,1,2)
-                x = self.adaptation_layers[i](x)
-                x = torch.transpose(x,1,2)
+                if self.skip_connection_type == 'cat_linear':
+                    x = torch.cat([x,activations[-1-i]],axis=1)
+                    x = torch.transpose(x,1,2)
+                    x = self.adaptation_layers[i](x)
+                    x = torch.transpose(x,1,2)
+                elif self.skip_connection_type == 'scaled_sum':
+                    xskip = torch.transpose(activations[-1-i],1,2)
+                    x = x + torch.transpose(self.adaptation_layers[i](xskip),1,2)
                 i+=1
             else:
                 x = l(x)

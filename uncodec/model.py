@@ -238,11 +238,12 @@ class EncodecModel(nn.Module):
                    audio_normalize: bool = False,
                    segment: tp.Optional[float] = None,
                    name: str = 'unset',
-                   unet: bool = False):
+                   unet: bool = False,
+                   skip_connection_type: str = 'cat_linear'):
 
         if unet:
             encoder = m.USEANetEncoder(channels=channels, norm=model_norm, causal=causal)
-            decoder = m.USEANetDecoder(channels=channels, norm=model_norm, causal=causal)
+            decoder = m.USEANetDecoder(channels=channels, norm=model_norm, causal=causal, skip_connection_type=skip_connection_type)
         else:
             encoder = m.SEANetEncoder(channels=channels, norm=model_norm, causal=causal)
             decoder = m.SEANetDecoder(channels=channels, norm=model_norm, causal=causal)
@@ -305,7 +306,8 @@ class EncodecModel(nn.Module):
         return model
 
     @staticmethod
-    def uncodec_model_24khz(pretrained: bool = True, repository: tp.Optional[Path] = None):
+    def uncodec_model_24khz(pretrained: bool = True, repository: tp.Optional[Path] = None,
+                            skip_connection_type='cat_linear'):
         if repository:
             assert pretrained
         target_bandwidths = None
@@ -316,7 +318,8 @@ class EncodecModel(nn.Module):
             target_bandwidths, sample_rate, channels,
             causal=True, model_norm='weight_norm', audio_normalize=False,
             name='encodec_24khz' if pretrained else 'unset',
-            unet=True)
+            unet=True,
+            skip_connection_type=skip_connection_type)
         if pretrained:
             state_dict = EncodecModel._get_pretrained(checkpoint_name, repository)
             model.load_state_dict(state_dict, strict=False)
