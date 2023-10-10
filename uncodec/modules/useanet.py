@@ -131,7 +131,7 @@ class USEANetDecoder(nn.Module):
                  norm: str = 'weight_norm', norm_params: tp.Dict[str, tp.Any] = {}, kernel_size: int = 7,
                  last_kernel_size: int = 7, residual_kernel_size: int = 3, dilation_base: int = 2, causal: bool = False,
                  pad_mode: str = 'reflect', true_skip: bool = False, compress: int = 2, lstm: int = 2,
-                 trim_right_ratio: float = 1.0, skip_connection_type='cat_linear'):
+                 trim_right_ratio: float = 1.0, skip_connection_type='cat_linear', n_filters_encoder: int=32):
         super().__init__()
         self.dimension = dimension
         self.channels = channels
@@ -167,7 +167,7 @@ class USEANetDecoder(nn.Module):
             if self.skip_connection_type == 'cat_linear':
                 adaptation_layers.append(torch.nn.Linear(2*mult * n_filters, mult * n_filters))
             elif self.skip_connection_type == 'scaled_sum':
-                adaptation_layers.append(torch.nn.Sequential(torch.nn.Linear(mult * n_filters, mult * n_filters), ScaleLayer()))
+                adaptation_layers.append(torch.nn.Sequential(torch.nn.Linear(mult * n_filters_encoder, mult * n_filters), ScaleLayer()))
             else:
                 raise Exception('Unrecognized skip_connection_type')
             # Add residual layers
@@ -188,9 +188,9 @@ class USEANetDecoder(nn.Module):
                     causal=causal, pad_mode=pad_mode)
         ]
         if self.skip_connection_type == 'cat_linear':
-            adaptation_layers.append(torch.nn.Linear(2*n_filters, n_filters),)
+            adaptation_layers.append(torch.nn.Linear(n_filters+n_filters_encoder, n_filters),)
         elif self.skip_connection_type == 'scaled_sum':
-            adaptation_layers.append(torch.nn.Sequential(torch.nn.Linear(n_filters, n_filters), ScaleLayer()))
+            adaptation_layers.append(torch.nn.Sequential(torch.nn.Linear(n_filters_encoder, n_filters), ScaleLayer()))
         else:
             raise Exception('Unrecognized skip_connection_type')
         # Add optional final activation to decoder (eg. tanh)

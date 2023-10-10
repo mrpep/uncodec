@@ -239,14 +239,15 @@ class EncodecModel(nn.Module):
                    segment: tp.Optional[float] = None,
                    name: str = 'unset',
                    unet: bool = False,
-                   skip_connection_type: str = 'cat_linear'):
+                   skip_connection_type: str = 'cat_linear',
+                   n_filters: int = 32):
 
         if unet:
             encoder = m.USEANetEncoder(channels=channels, norm=model_norm, causal=causal)
-            decoder = m.USEANetDecoder(channels=channels, norm=model_norm, causal=causal, skip_connection_type=skip_connection_type)
+            decoder = m.USEANetDecoder(channels=channels, norm=model_norm, causal=causal, skip_connection_type=skip_connection_type, n_filters=n_filters)
         else:
             encoder = m.SEANetEncoder(channels=channels, norm=model_norm, causal=causal)
-            decoder = m.SEANetDecoder(channels=channels, norm=model_norm, causal=causal)
+            decoder = m.SEANetDecoder(channels=channels, norm=model_norm, causal=causal, n_filters=n_filters)
 
         if target_bandwidths is not None:
             n_q = int(1000 * target_bandwidths[-1] // (math.ceil(sample_rate / encoder.hop_length) * 10))
@@ -307,7 +308,7 @@ class EncodecModel(nn.Module):
 
     @staticmethod
     def uncodec_model_24khz(pretrained: bool = True, repository: tp.Optional[Path] = None,
-                            skip_connection_type='cat_linear'):
+                            skip_connection_type='cat_linear', n_filters_decoder=32):
         if repository:
             assert pretrained
         target_bandwidths = None
@@ -319,9 +320,13 @@ class EncodecModel(nn.Module):
             causal=True, model_norm='weight_norm', audio_normalize=False,
             name='encodec_24khz' if pretrained else 'unset',
             unet=True,
-            skip_connection_type=skip_connection_type)
+            skip_connection_type=skip_connection_type,
+            n_filters=n_filters_decoder)
         if pretrained:
             state_dict = EncodecModel._get_pretrained(checkpoint_name, repository)
+            if n_filters_decoder != 32:
+                #This means we are overriding default decoder
+                state_dict = {k: v for k,v in state_dict.items() if not k.startswith('decoder')}
             model.load_state_dict(state_dict, strict=False)
         model.eval()
         return model
